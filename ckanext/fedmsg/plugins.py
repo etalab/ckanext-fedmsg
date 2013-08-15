@@ -25,6 +25,7 @@
 
 import socket
 import time
+import traceback
 
 from biryani1 import baseconv as conv
 from ckan import model, plugins
@@ -44,13 +45,25 @@ class FedmsgPlugin(plugins.SingletonPlugin):
     last_publication_type = None
 
     def after_delete(self, mapper, connection, instance):
-        self.publish('delete', instance)
+        try:
+            self.publish('delete', instance)
+        except:
+            traceback.print_exc()
+            raise
 
     def after_insert(self, mapper, connection, instance):
-        self.publish('create', instance)
+        try:
+            self.publish('create', instance)
+        except:
+            traceback.print_exc()
+            raise
 
     def after_update(self, mapper, connection, instance):
-        self.publish('update', instance)
+        try:
+            self.publish('update', instance)
+        except:
+            traceback.print_exc()
+            raise
 
     def configure(self, config):
         hostname = socket.gethostname().split('.')[0]
