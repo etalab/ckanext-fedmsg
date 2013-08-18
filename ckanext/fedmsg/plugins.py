@@ -120,11 +120,11 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             # keep_sensitive_data = False,
             model = model,
             session = model.Session,
-            user = None,
+            # user = None,  # Package creation (and delete) fails when user is set to None.
             )
         # Note: Order of items in "for" instructions is important.
         for action in ('create', 'update'):
-            for kind, command_by_id, show in (
+            for kind, command_by_id, to_json in (
                     ('tag', tag_command_by_id, plugins.toolkit.get_action('tag_show')),
                     ('group', group_command_by_id, plugins.toolkit.get_action('group_show')),
                     ('organization', organization_command_by_id, plugins.toolkit.get_action('organization_show')),
@@ -137,19 +137,19 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                     try:
                         fedmsg.publish(
                             modname = fedmsg_config['modname'],
-                            msg = show(context, dict(id = instance.id)),
+                            msg = to_json(context, dict(id = instance.id)),
                             topic = '{}.{}'.format(kind, action),
                             )
                     except:
                         traceback.print_exc()
                         raise
         for action in ('delete',):
-            for kind, command_by_id, show in (
-                    ('package', package_command_by_id, plugins.toolkit.get_action('package_show')),
-                    ('user', user_command_by_id, plugins.toolkit.get_action('user_show')),
-                    ('organization', organization_command_by_id, plugins.toolkit.get_action('organization_show')),
-                    ('group', group_command_by_id, plugins.toolkit.get_action('group_show')),
-                    ('tag', tag_command_by_id, plugins.toolkit.get_action('tag_show')),
+            for kind, command_by_id in (
+                    ('package', package_command_by_id),
+                    ('user', user_command_by_id),
+                    ('organization', organization_command_by_id),
+                    ('group', group_command_by_id),
+                    ('tag', tag_command_by_id),
                     ):
                 for command_action, instance in command_by_id.itervalues():
                     if command_action != action:
@@ -157,7 +157,7 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                     try:
                         fedmsg.publish(
                             modname = fedmsg_config['modname'],
-                            msg = show(context, dict(id = instance.id)),
+                            msg = dict(id = instance.id),
                             topic = '{}.{}'.format(kind, action),
                             )
                     except:
