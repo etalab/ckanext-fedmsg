@@ -24,12 +24,10 @@
 
 
 import socket
-import time
 import traceback
 
 from biryani1 import baseconv as conv
 from ckan import model, plugins
-from ckan.lib.dictization import model_dictize
 import fedmsg
 
 
@@ -38,32 +36,133 @@ fedmsg_config = None
 
 class FedmsgPlugin(plugins.SingletonPlugin):
     plugins.implements(plugins.IConfigurable)
-    plugins.implements(plugins.IMapper, inherit = True)
+    plugins.implements(plugins.ISession, inherit = True)
 
-    last_publication_id = None
-    last_publication_time = None
-    last_publication_type = None
+    def before_commit(self, session):
+        # Code inspired from ckan.model.modification.DomainObjectModificationExtension.
+        session.flush()
+        if not hasattr(session, '_object_cache'):
+            return
+        object_cache = session._object_cache
 
-    def after_delete(self, mapper, connection, instance):
-        try:
-            self.publish('delete', instance)
-        except:
-            traceback.print_exc()
-            raise
+        group_command_by_id = {}
+        organization_command_by_id = {}
+        package_command_by_id = {}
+        tag_command_by_id = {}
+        user_command_by_id = {}
+        for action, instances in (
+                ('create', object_cache['new']),
+                ('delete', object_cache['deleted']),
+                ('update', object_cache['changed']),
+                ):
+            for instance in instances:
+                if isinstance(instance, (
+                        model.Activity,
+                        model.ActivityDetail,
+                        model.GroupRole,
+                        model.PackageRole,
+                        model.Revision,
+                        model.RoleAction,
+                        model.SystemInfo,
+                        model.SystemRole,
+                        #model.TaskStatus,
+                        model.TrackingSummary,
+                        model.UserFollowingUser,
+                        model.UserFollowingDataset,
+                        model.UserFollowingGroup,
+                        model.UserObjectRole,
+                        #model.Vocabulary,
+                        )):
+                    continue
+                if isinstance(instance, model.Group):
+                    if instance.is_organization:
+                        add_command(organization_command_by_id, action, instance)
+                    else:
+                        add_command(group_command_by_id, action, instance)
+                elif isinstance(instance, (model.GroupExtra, model.Member)):
+                    group = instance.group
+                    if group.is_organization:
+                        add_command(organization_command_by_id, 'update', group)
+                    else:
+                        add_command(group_command_by_id, 'update', group)
+                elif isinstance(instance, model.Package):
+                    add_command(package_command_by_id, action, instance)
+                elif isinstance(instance, (model.PackageExtra, model.PackageTag)):
+                    add_command(package_command_by_id, 'update', instance.package)
+                elif isinstance(instance, model.PackageRelationship):
+                    add_command(package_command_by_id, 'update', instance.object)
+                    add_command(package_command_by_id, 'update', instance.subject)
+                elif isinstance(instance, model.Rating):
+                    add_command(package_command_by_id, 'update', instance.package)
+                    add_command(user_command_by_id, 'update', instance.user)
+                elif isinstance(instance, model.Related):
+                    for package in instance.datasets:
+                        add_command(package_command_by_id, 'update', package)
+                elif isinstance(instance, model.RelatedDataset):
+                    add_command(package_command_by_id, 'update', instance.dataset)
+                elif isinstance(instance, model.Resource):
+                    resource_group = instance.resource_group
+                    if resource_group is not None:
+                        add_command(package_command_by_id, 'update', resource_group.package)
+                elif isinstance(instance, model.ResourceGroup):
+                    add_command(package_command_by_id, 'update', instance.package)
+                elif isinstance(instance, model.Tag):
+                    add_command(tag_command_by_id, action, instance)
+                elif isinstance(instance, model.User):
+                    add_command(user_command_by_id, action, instance)
+                else:
+                    print 'TODO: IMapper {}: {}'.format(action, instance)
 
-    def after_insert(self, mapper, connection, instance):
-        try:
-            self.publish('create', instance)
-        except:
-            traceback.print_exc()
-            raise
-
-    def after_update(self, mapper, connection, instance):
-        try:
-            self.publish('update', instance)
-        except:
-            traceback.print_exc()
-            raise
+        context = dict(
+            # active = True,
+            api_version = 3,
+            # include_private_packages = False
+            # keep_sensitive_data = False,
+            model = model,
+            session = model.Session,
+            user = None,
+            )
+        # Note: Order of items in "for" instructions is important.
+        for action in ('create', 'update'):
+            for kind, command_by_id, show in (
+                    ('tag', tag_command_by_id, plugins.toolkit.get_action('tag_show')),
+                    ('group', group_command_by_id, plugins.toolkit.get_action('group_show')),
+                    ('organization', organization_command_by_id, plugins.toolkit.get_action('organization_show')),
+                    ('user', user_command_by_id, plugins.toolkit.get_action('user_show')),
+                    ('package', package_command_by_id, plugins.toolkit.get_action('package_show')),
+                    ):
+                for command_action, instance in command_by_id.itervalues():
+                    if command_action != action:
+                        continue
+                    try:
+                        fedmsg.publish(
+                            modname = fedmsg_config['modname'],
+                            msg = show(context, dict(id = instance.id)),
+                            topic = '{}.{}'.format(kind, action),
+                            )
+                    except:
+                        traceback.print_exc()
+                        raise
+        for action in ('delete',):
+            for kind, command_by_id, show in (
+                    ('package', package_command_by_id, plugins.toolkit.get_action('package_show')),
+                    ('user', user_command_by_id, plugins.toolkit.get_action('user_show')),
+                    ('organization', organization_command_by_id, plugins.toolkit.get_action('organization_show')),
+                    ('group', group_command_by_id, plugins.toolkit.get_action('group_show')),
+                    ('tag', tag_command_by_id, plugins.toolkit.get_action('tag_show')),
+                    ):
+                for command_action, instance in command_by_id.itervalues():
+                    if command_action != action:
+                        continue
+                    try:
+                        fedmsg.publish(
+                            modname = fedmsg_config['modname'],
+                            msg = show(context, dict(id = instance.id)),
+                            topic = '{}.{}'.format(kind, action),
+                            )
+                    except:
+                        traceback.print_exc()
+                        raise
 
     def configure(self, config):
         hostname = socket.gethostname().split('.')[0]
@@ -100,129 +199,20 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             if key != 'name' and value is not None
             ))
 
-    @classmethod
-    def publish(cls, action, instance):
-        if isinstance(instance, (
-                model.Activity,
-                model.ActivityDetail,
-                #model.GroupRole,
-                #model.PackageRole,
-                #model.RoleAction,
-                model.SystemInfo,
-                #model.SystemRole,
-                #model.TaskStatus,
-                model.TrackingSummary,
-                model.UserFollowingUser,
-                model.UserFollowingDataset,
-                model.UserFollowingGroup,
-                #model.UserObjectRole,
-                #model.Vocabulary,
-                )):
-            return
-        group = None
-        packages = None
-        tag = None
-        user = None
-        if isinstance(instance, model.Group):
-            group = instance
-        elif isinstance(instance, model.GroupExtra):
-            group = instance.group
-        elif isinstance(instance, model.Member):
-            group = instance.group
-        elif isinstance(instance, model.Package):
-            packages = [instance]
-        elif isinstance(instance, model.PackageExtra):
-            package = instance.package
-            if package is not None:
-                packages = [package]
-        elif isinstance(instance, model.PackageRelationship):
-            packages = [
-                package
-                for package in (instance.subject, instance.object)
-                if package is not None
-                ]
-        elif isinstance(instance, model.PackageTag):
-            package = instance.package
-            if package is not None:
-                packages = [package]
-        elif isinstance(instance, model.Rating):
-            package = instance.package
-            if package is not None:
-                packages = [package]
-            user = instance.user
-        elif isinstance(instance, model.Related):
-            packages = [
-                package
-                for package in instance.datasets
-                ]
-        elif isinstance(instance, model.RelatedDataset):
-            package = instance.dataset
-            if package is not None:
-                packages = [package]
-        elif isinstance(instance, model.Resource):
-            resource_group = instance.resource_group
-            if resource_group is not None:
-                package = resource_group.package
-                if package is not None:
-                    packages = [package]
-        elif isinstance(instance, model.ResourceGroup):
-            package = instance.package
-            if package is not None:
-                packages = [package]
-        elif isinstance(instance, model.Tag):
-            tag = instance
-        elif isinstance(instance, model.User):
-            user = instance
-        else:
-            print 'TODO: IMapper {}: {}'.format(action, instance)
 
-        context = dict(
-            keep_sensitive_data = True,
-            model = model,
-            )
-        now = time.time()
-        if group is not None:
-            if cls.last_publication_time is None or cls.last_publication_time + 1 < now \
-                    or cls.last_publication_type != 'group' or cls.last_publication_id != group.id:
-                fedmsg.publish(
-                    topic = '{}.{}'.format('organization' if group.is_organization else 'group', action),
-                    modname = fedmsg_config['modname'],
-                    msg = model_dictize.group_dictize(group, context),
-                    )
-            cls.last_publication_id = group.id
-            cls.last_publication_time = now
-            cls.last_publication_type = 'group'
-        if packages:
-            for package in packages:
-                if cls.last_publication_time is None or cls.last_publication_time + 1 < now \
-                        or cls.last_publication_type != 'package' or cls.last_publication_id != package.id:
-                    fedmsg.publish(
-                        topic = 'package.{}'.format(action),
-                        modname = fedmsg_config['modname'],
-                        msg = model_dictize.package_dictize(package, context),
-                        )
-            cls.last_publication_id = package.id
-            cls.last_publication_time = now
-            cls.last_publication_type = 'package'
-        if tag is not None:
-            if cls.last_publication_time is None or cls.last_publication_time + 1 < now \
-                    or cls.last_publication_type != 'tag' or cls.last_publication_id != tag.id:
-                fedmsg.publish(
-                    topic = 'tag.{}'.format(action),
-                    modname = fedmsg_config['modname'],
-                    msg = model_dictize.tag_dictize(tag, context),
-                    )
-            cls.last_publication_id = tag.id
-            cls.last_publication_time = now
-            cls.last_publication_type = 'tag'
-        if user is not None:
-            if cls.last_publication_time is None or cls.last_publication_time + 1 < now \
-                    or cls.last_publication_type != 'user' or cls.last_publication_id != user.id:
-                fedmsg.publish(
-                    topic = 'user.{}'.format(action),
-                    modname = fedmsg_config['modname'],
-                    msg = model_dictize.user_dictize(user, context),
-                    )
-            cls.last_publication_id = user.id
-            cls.last_publication_time = now
-            cls.last_publication_type = 'user'
+def add_command(command_by_id, action, instance):
+    assert action in ('create', 'delete', 'update'), action
+    if instance is None:
+        return
+    if isinstance(instance, model.Package) and instance.state != 'active' and action != 'delete':
+        action = 'delete'
+    id = instance.id
+    assert id is not None
+    command = command_by_id.get(id)
+    if command is None:
+        command_by_id[id] = [action, instance]
+    elif action in ('create', 'delete'):
+        if command[0] == 'update':
+            command[0] = action
+        else:
+            assert command[0] == action
