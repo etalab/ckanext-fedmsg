@@ -81,10 +81,11 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                         add_command(group_command_by_id, action, instance)
                 elif isinstance(instance, (model.GroupExtra, model.Member)):
                     group = instance.group
-                    if group.is_organization:
-                        add_command(organization_command_by_id, 'update', group)
-                    else:
-                        add_command(group_command_by_id, 'update', group)
+                    if group is not None:
+                        if group.is_organization:
+                            add_command(organization_command_by_id, 'update', group)
+                        else:
+                            add_command(group_command_by_id, 'update', group)
                 elif isinstance(instance, model.Package):
                     add_command(package_command_by_id, action, instance)
                 elif isinstance(instance, (model.PackageExtra, model.PackageTag)):
