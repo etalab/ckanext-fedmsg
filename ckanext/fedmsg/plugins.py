@@ -5,7 +5,7 @@
 # By: Emmanuel Raviart <emmanuel@raviart.com>
 #
 # Copyright (C) 2013 Emmanuel Raviart
-# http://gitorious.org/etalab/ckanext-fedmsg
+# http://github.com/etalab/ckanext-fedmsg
 #
 # This file is part of CKANExt-fedmsg.
 #
