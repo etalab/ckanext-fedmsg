@@ -66,6 +66,9 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                 ('update', object_cache['changed']),
                 ):
             for instance in instances:
+                if instance.__class__.__name__.endswith('Revision'):
+                    # Ignore changes on revisions.
+                    continue
                 if isinstance(instance, (
                         model.ActivityDetail,
                         model.GroupRole,
