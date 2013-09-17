@@ -45,9 +45,19 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             return
         object_cache = session._object_cache
 
+        context = dict(
+            # active = True,
+            api_version = 3,
+            # include_private_packages = False
+            # keep_sensitive_data = False,
+            model = model,
+            session = model.Session,
+            # user = None,  # Package creation (and delete) fails when user is set to None.
+            )
         group_command_by_id = {}
         organization_command_by_id = {}
         package_command_by_id = {}
+        related_command_by_id = {}
         tag_command_by_id = {}
         user_command_by_id = {}
         for action, instances in (
@@ -57,7 +67,6 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                 ):
             for instance in instances:
                 if isinstance(instance, (
-                        model.Activity,
                         model.ActivityDetail,
                         model.GroupRole,
                         model.PackageRole,
@@ -74,7 +83,24 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                         #model.Vocabulary,
                         )):
                     continue
-                if isinstance(instance, model.Group):
+                if isinstance(instance, model.Activity):
+                    # Hack that uses activity to detect when a Related has been created and to retrieve its dataset.
+                    # Because when a related is created, its dataset is not known when before_commit is called.
+                    if action == 'create' and instance.activity_type == u'new related item':
+                        related_json = instance.data['related']
+                        related_json['dataset_id'] = instance.data['dataset']['id']
+                        try:
+                            fedmsg.publish(
+                                modname = fedmsg_config['modname'],
+                                msg = related_json,
+                                topic = '{}.{}'.format('related', action),
+                                )
+                        except:
+                            traceback.print_exc()
+                            raise
+                    # Ignore activity changes.
+                    continue
+                elif isinstance(instance, model.Group):
                     if instance.is_organization:
                         add_command(organization_command_by_id, action, instance)
                     else:
@@ -97,10 +123,12 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                     add_command(package_command_by_id, 'update', instance.package)
                     add_command(user_command_by_id, 'update', instance.user)
                 elif isinstance(instance, model.Related):
-                    for package in instance.datasets:
-                        add_command(package_command_by_id, 'update', package)
-                elif isinstance(instance, model.RelatedDataset):
-                    add_command(package_command_by_id, 'update', instance.dataset)
+                    # Note: "create" action is handled using Activity, because there is no way to retrieve the related
+                    # dataset at creation time (RelatedDataset doesn't exist yet).
+                    if action != 'create':
+                        add_command(related_command_by_id, action, instance)
+#                elif isinstance(instance, model.RelatedDataset):
+#                    add_command(package_command_by_id, 'update', instance.dataset)
                 elif isinstance(instance, model.Resource):
                     resource_group = instance.resource_group
                     if resource_group is not None:
@@ -114,21 +142,13 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                 else:
                     print 'TODO: IMapper {}: {}'.format(action, instance)
 
-        context = dict(
-            # active = True,
-            api_version = 3,
-            # include_private_packages = False
-            # keep_sensitive_data = False,
-            model = model,
-            session = model.Session,
-            # user = None,  # Package creation (and delete) fails when user is set to None.
-            )
         # Note: Order of items in "for" instructions is important.
         for action in ('create', 'update'):
             for kind, command_by_id, to_json in (
                     ('tag', tag_command_by_id, plugins.toolkit.get_action('tag_show')),
                     ('group', group_command_by_id, plugins.toolkit.get_action('group_show')),
                     ('organization', organization_command_by_id, plugins.toolkit.get_action('organization_show')),
+                    ('related', related_command_by_id, related_show),
                     ('user', user_command_by_id, plugins.toolkit.get_action('user_show')),
                     ('package', package_command_by_id, plugins.toolkit.get_action('package_show')),
                     ):
@@ -148,6 +168,7 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             for kind, command_by_id in (
                     ('package', package_command_by_id),
                     ('user', user_command_by_id),
+                    ('related', related_command_by_id),
                     ('organization', organization_command_by_id),
                     ('group', group_command_by_id),
                     ('tag', tag_command_by_id),
@@ -217,3 +238,15 @@ def add_command(command_by_id, action, instance):
             command[0] = action
         else:
             assert command[0] == action
+
+
+def related_show(context, data_dict):
+    related_dict = plugins.toolkit.get_action('related_show')(context, data_dict)
+    model = context['model']
+    related_dataset = model.Session.query(model.RelatedDataset).filter(
+        model.RelatedDataset.related_id == data_dict['id'],
+        model.RelatedDataset.status == u'active',
+        ).first()
+    if related_dataset is not None:
+        related_dict['dataset_id'] = related_dataset.dataset_id
+    return related_dict
