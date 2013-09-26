@@ -199,6 +199,7 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             environment = conv.pipe(
                 conv.empty_to_none,
                 conv.test_in(['dev', 'prod', 'stg']),
+                conv.default('dev'),
                 ),
             modname = conv.pipe(
                 conv.empty_to_none,
@@ -212,9 +213,10 @@ class FedmsgPlugin(plugins.SingletonPlugin):
             topic_prefix = conv.pipe(
                 conv.empty_to_none,
                 conv.test(lambda value: value == value.strip('.'), error = 'Value must not begin or end with a "."'),
+                conv.not_none,
                 ),
             )))(dict(
-                (key[len('fedmsg.')], value)
+                (key[len('fedmsg.'):], value)
                 for key, value in config.iteritems()
                 if key.startswith('fedmsg.')
                 ))
