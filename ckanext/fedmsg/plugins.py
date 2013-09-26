@@ -23,6 +23,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+import logging
 import socket
 import traceback
 
@@ -32,6 +33,7 @@ import fedmsg
 
 
 fedmsg_config = None
+log = logging.getLogger(__name__)
 
 
 class FedmsgPlugin(plugins.SingletonPlugin):
@@ -143,7 +145,7 @@ class FedmsgPlugin(plugins.SingletonPlugin):
                 elif isinstance(instance, model.User):
                     add_command(user_command_by_id, action, instance)
                 else:
-                    print 'TODO: IMapper {}: {}'.format(action, instance)
+                    log.debug('IMapper not handled : {} - {}'.format(action, instance))
 
         # Note: Order of items in "for" instructions is important.
         for action in ('create', 'update'):
