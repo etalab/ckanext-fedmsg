@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 
-# CKANExt-fedmsg -- CKAN extension for sending activity events to fedmsg Bus
+# CKANExt-fedmsg -- CKAN extension for sending activity events to fedmsg bus
 # By: Emmanuel Raviart <emmanuel@raviart.com>
 #
 # Copyright (C) 2013 Etalab
