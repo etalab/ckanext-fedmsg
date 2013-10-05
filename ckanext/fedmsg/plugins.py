@@ -29,6 +29,7 @@ import traceback
 
 from biryani1 import baseconv as conv
 from ckan import model, plugins
+from ckan.lib.dictization import model_dictize
 import fedmsg
 
 
@@ -248,8 +249,11 @@ def add_command(command_by_id, action, instance):
 
 
 def related_show(context, data_dict):
-    related_dict = plugins.toolkit.get_action('related_show')(context, data_dict)
+    # Don't use related_show action, because it removes "created" attribute and puts "view_count" into "__extras" dict.
+    # related_dict = plugins.toolkit.get_action('related_show')(context, data_dict)
     model = context['model']
+    related = model.Session.query(model.Related).get(data_dict['id'])
+    related_dict = model_dictize.related_dictize(related, context)
     related_dataset = model.Session.query(model.RelatedDataset).filter(
         model.RelatedDataset.related_id == data_dict['id'],
         model.RelatedDataset.status == u'active',
